@@ -1,52 +1,54 @@
-from langchain.llms import HuggingFaceHub
-from langchain.prompts import PromptTemplate
-from langchain.chains import LLMChain
-import os
+import re
+from collections import Counter
+import spacy
 
-# Set this in your environment or directly here (not recommended in prod)
-os.environ["HUGGINGFACEHUB_API_TOKEN"] = "your_huggingface_api_key_here"
-
-# Define your prompt
-base_prompt = """
-You are a resume parser. Given the raw text of a resume, extract the following:
-- Name
-- Email
-- Phone Number
-- Skills (as a list of comma-separated values)
-
-Resume:
-{text}
-
-Return the extracted information as a JSON object with keys: "name", "email", "phone", "skills".
-"""
-
-llm = HuggingFaceHub(
-    repo_id="google/flan-t5-base", model_kwargs={"temperature": 0.5, "max_length": 512}
-)
-
-prompt = PromptTemplate(
-    input_variables=["text"],
-    template=base_prompt
-)
-
-llm_chain = LLMChain(prompt=prompt, llm=llm)
-
-def parse_resume(text):
-    try:
-        result = llm_chain.run(text=text)
-        import json
-        return json.loads(result)
-    except Exception as e:
-        return {"name": None, "email": None, "phone": None, "skills": []}
-
-def extract_name(text):
-    return parse_resume(text).get("name")
+# Load English NLP model
+nlp = spacy.load("en_core_web_sm")
 
 def extract_email(text):
-    return parse_resume(text).get("email")
+    emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
+    return emails[0] if emails else "Not found"
 
 def extract_phone(text):
-    return parse_resume(text).get("phone")
+    phones = re.findall(r"\+?\d[\d\s\-]{8,}\d", text)
+    return phones[0] if phones else "Not found"
 
-def extract_skills(text):
-    return parse_resume(text).get("skills", [])
+def extract_name(text):
+    doc = nlp(text)
+    raw_names = []
+
+    for ent in doc.ents:
+        if ent.label_ == "PERSON":
+            # Clean name: strip whitespace and trailing punctuation
+            cleaned_name = ent.text.strip()
+            cleaned_name = re.sub(r'[^\w\s\-]', '', cleaned_name)  # Remove punctuation except hyphen
+            # Filter out too short names (e.g., single characters or initials)
+            if len(cleaned_name) < 3:
+                continue
+            # Prefer names with at least two words (e.g., first and last)
+            if len(cleaned_name.split()) < 2:
+                continue
+            raw_names.append(cleaned_name)
+
+    if not raw_names:
+        return None
+
+    # Count frequency ignoring case to find the most common name
+    name_counter = Counter(name.lower() for name in raw_names)
+
+    # Get the most common name (case-insensitive)
+    most_common_name_lower, _ = name_counter.most_common(1)[0]
+
+    # Return the original casing name that matches the most common lowercase version
+    for name in raw_names:
+        if name.lower() == most_common_name_lower:
+            return name
+
+    # Fallback: longest name if no frequency difference
+    return max(raw_names, key=len)
+
+
+def extract_skills(text, skill_list):
+    text = text.lower()
+    found = [skill for skill in skill_list if skill.lower() in text]
+    return list(set(found))

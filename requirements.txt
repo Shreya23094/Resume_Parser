@@ -1,6 +1,4 @@
 streamlit
-langchain
-transformers
-torch
+spacy
+pdfplumber
 docx2txt
-PyPDF2
